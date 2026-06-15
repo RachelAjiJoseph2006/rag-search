@@ -26,9 +26,9 @@ The app extracts text from the PDF, stores embeddings, retrieves relevant chunks
 - **Vector embeddings**
 
 ### Frontend
-- **HTML**
+- **React**
 - **CSS**
-- **Vanilla JavaScript**
+- **TypeScript**
 
 ---
 
