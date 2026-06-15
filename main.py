@@ -7,42 +7,55 @@ from pypdf import PdfReader
 from io import BytesIO
 import faiss
 import pickle
-from openai import OpenAI
+from groq import Groq
 from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
+
+load_dotenv()
 
 faiss_index = None
 chunks = []
 app = FastAPI()
+api_key = os.getenv("API_KEY")
+print(api_key)
 model = SentenceTransformer("all-MiniLM-L6-v2")
-client = OpenAI(api_key="openai_api_key")
+client = Groq(api_key=api_key)
+
 
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # allow this origin to make requests
+    allow_origins=[
+        "http://localhost:5173"
+    ],  # allow this origin to make requests
     allow_credentials=True,
     allow_methods=["*"],      # allow GET, POST, etc.
     allow_headers=["*"],      # allow headers
 )
 
 def generate_answer(prompt: str) -> str:
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {
-                "role": "system",
-                "content": "You are a helpful assistant that answers using provided context only."
-            },
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ],
-        temperature=0.3,
-        max_tokens=200
-    )
+    try:
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant that answers using provided context only."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            temperature=0.3,
+            max_tokens=200
+        )
 
-    return response.choices[0].message.content.strip()
+        return response.choices[0].message.content.strip()
+
+    except Exception as e:
+        print("Groq Error:", e)
+        return "Error generating response."
 
 
 def save_index_and_chunks(index, chunks):
@@ -61,10 +74,17 @@ def create_faiss_index(embeddings):
 
 def rag_answer(question):
     # 1. Search top 3 chunks
-    chunks = search_similar_chunks(question)  # your Day 3 function
+    retrieved_chunks = search_similar_chunks(question)  # your Day 3 function
+
+    if not retrieved_chunks:
+        return {
+            "question": question,
+            "answer": "I don't know",
+            "sources": []
+        }
 
     # 2. Build prompt
-    prompt = build_prompt(chunks, question)
+    prompt = build_prompt(retrieved_chunks, question)
 
     # 3. Generate answer
     answer = generate_answer(prompt)
@@ -72,7 +92,7 @@ def rag_answer(question):
     return {
         "question": question,
         "answer": answer,
-        "sources": chunks
+        "sources": retrieved_chunks
     }
 
 
@@ -177,14 +197,13 @@ def load_index():
 
 @app.get("/search")
 def search(query: str):
-    query_vec = model.encode([query]).astype("float32")
+    if faiss_index is None:
+        return {"error": "Upload a PDF first"}
 
+    query_vec = model.encode([query]).astype("float32")
     distances, indices = faiss_index.search(query_vec, k=3)
 
-    results = [chunks[i] for i in indices[0]]
-
-    return {"results": results}
-
+    return {"results": [chunks[i] for i in indices[0]]}
 
 
 @app.get("/")
@@ -199,20 +218,28 @@ async def upload_pdf(file: UploadFile = File(...)):
     text = extract_text_from_pdf(await file.read())
     new_chunks = chunk_text(text, chunk_size=400)
 
-    embeddings = model.encode(new_chunks)
-
+    embeddings = embed_chunks(new_chunks)
     dim = embeddings.shape[1]
 
     if faiss_index is None:
         faiss_index = faiss.IndexFlatL2(dim)
+    else:
+        assert faiss_index.d == dim, "Embedding dimension mismatch"
 
-    faiss_index.add(np.array(embeddings).astype("float32"))
+    faiss_index.add(embeddings)
     chunks.extend(new_chunks)
+
+    # ✅ SAVE TO DISK
+    save_index_and_chunks(faiss_index, chunks)
+
+    print("TOTAL CHUNKS STORED:", len(chunks))
 
     return {
         "status": "success",
         "total_chunks": len(chunks)
     }
+
+
 
 @app.get("/rag")
 def rag_endpoint(query: str):
