@@ -2,6 +2,9 @@ fastapi
 uvicorn
 sentence-transformers
 numpy
+requests
 pypdf
 faiss-cpu
+groq
+python-dotenv
 python-multipart
