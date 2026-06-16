@@ -245,3 +245,5 @@ async def upload_pdf(file: UploadFile = File(...)):
 def rag_endpoint(query: str):
     print(f"Received query: {query}") 
     return rag_answer(query)
+
+# Triggering a fresh, lightweight backend deployment
